@@ -9,6 +9,7 @@ ipython = "*"
 lxml = "*"
 requests = "*"
 tencentcloud-sdk-python-tmt = "*"
+markdown = "*"
 
 [dev-packages]
 
