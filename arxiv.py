@@ -3,8 +3,7 @@ import datetime
 import hashlib
 import os
 import os.path as path
-import pprint
-import re
+import pickle
 import time
 from dataclasses import dataclass
 
@@ -13,12 +12,14 @@ import markdown
 import requests
 
 import ArxivCategory
+import tencent_translator
 import utils
 
 RSS_BASE = "http://arxiv.org/rss/"
 API_BASE = "http://export.arxiv.org/api/query"
 CACHE_FETCH = "cache/fetch/"
 CACHE_GEN = "cache/gen/"
+CACHE_TRANS = "cache/trans.pkl"
 if not path.exists(CACHE_FETCH):
     os.makedirs(CACHE_FETCH)
 if not path.exists(CACHE_GEN):
@@ -61,17 +62,24 @@ class ATOMItem:
     primary_category: str
 
     def get_short_id(self) -> str:
-        return self.id.strip("/").split("/")[-1]
+        if not hasattr(self, "id_short"):
+            self.id_short = self.id.strip("/").split("/")[-1]
+        return self.id_short
 
     def is_update(self) -> bool:
         return self.updated != self.published
 
-    def to_markdown(self):
+    def to_markdown(self, translations=None):
+        title_trans = None
+        if translations is not None:
+            if self.get_short_id() in translations:
+                title_trans = translations[self.get_short_id()][0]
+        
         return f"""\
 ### {self.title}
 
-> **Translated title here**  
-> Link: [{self.link_abs.strip("/").split("/")[-1]}]({self.link_abs})  
+> **{"标题" if title_trans is None else title_trans}**  
+> Link: [{self.get_short_id()}]({self.link_abs})  
 > Comments: {self.comment}  
 > Category: **{self.primary_category}**, {", ".join(self.category)}  
 > Authors: {", ".join(self.author)}  
@@ -220,6 +228,7 @@ def query_atom(id_list, items_per_req=20, force=False, req_interval=3):
 def generate(cate_list: list[str], tag: str, args):
     STARTTIME = utils.get_local_time(datetime.datetime.now())
     date_filename = STARTTIME.strftime("%y%m%d.%I%p")
+    translations: dict[str, list[str | None]] = None
 
     print(f"[STATUS] Querying RSS for Category: {cate_list}")
     id_list = []
@@ -235,17 +244,35 @@ def generate(cate_list: list[str], tag: str, args):
     atom_items: list[ATOMItem] = []
     for atom_str in atom_strs:
         atom_items += parse_atom(atom_str)
-    cate2item = dict()
+    cate2item: dict[str, list[ATOMItem]] = {}
     for item in atom_items:
         item.title = utils.pre_proc_title(item.title)
-        if item.primary_category not in cate2item.keys():
+        if item.primary_category not in cate2item:
             cate2item[item.primary_category] = []
         cate2item[item.primary_category].append(item)
     if VERBOSE:
         print("; ".join([f"{cate}:{len(cate2item[cate])}" for cate in cate2item]))
 
     if args.translate_title:
+        if path.exists(CACHE_TRANS):
+            translations = utils.pkl_load(CACHE_TRANS)
+            print(f"[INFO] Loaded translation cache file `{CACHE_TRANS}`")
+        else:
+            translations = {}
+
         print(f"[STATUS] Translating titles")
+        for item in atom_items:
+            if item.get_short_id() not in translations:
+                translations[item.get_short_id()] = [None, None]
+            if translations[item.get_short_id()][0] is not None:
+                continue
+            title_trans = tencent_translator.translate(item.title)
+            if title_trans is None:
+                utils.pkl_dump(translations, CACHE_TRANS)
+                raise Exception
+            else:
+                translations[item.get_short_id()][0] = title_trans
+        utils.pkl_dump(translations, CACHE_TRANS)
 
     print(f"[STATUS] Generating markdown")
     md_file_name = f"Feed-{date_filename}-{tag}.md"
@@ -258,13 +285,13 @@ def generate(cate_list: list[str], tag: str, args):
 
 """)
         for cate in cate2item:
-            if cate not in ArxivCategory.CS_CATEGORY.keys():
+            if cate not in ArxivCategory.CS_CATEGORY:
                 continue
             f.write(f"""## {cate}, {ArxivCategory.ALL_CATEGORY[cate]}\n""")
             for item in cate2item[cate]:
-                f.write(item.to_markdown())
+                f.write(item.to_markdown(translations))
         for cate in cate2item:
-            if cate not in ArxivCategory.CS_CATEGORY.keys():
+            if cate not in ArxivCategory.CS_CATEGORY:
                 skips = [item.get_short_id() for item in cate2item[cate]]
                 f.write(f"> SKIP {cate} {','.join(skips)}  \n")
 
@@ -289,8 +316,9 @@ if __name__ == "__main__":
     # generate(ArxivCategory.AI_CATEGORY, "AI")
 
 """
-TODO [] datetime
+TODO [] datetime for each item
 TODO [] Special character
 TODO [] Translate
 TODO [] Math
+TODO [] Cache to sqlite instead of pickle
 """
