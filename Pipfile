@@ -10,6 +10,7 @@ lxml = "*"
 requests = "*"
 tencentcloud-sdk-python-tmt = "*"
 markdown = "*"
+pytz = "*"
 
 [dev-packages]
 

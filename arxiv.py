@@ -13,7 +13,10 @@ import markdown
 import requests
 
 import ArxivCategory
+import utils
 
+RSS_BASE = "http://arxiv.org/rss/"
+API_BASE = "http://export.arxiv.org/api/query"
 CACHE_FETCH = "cache/fetch/"
 CACHE_GEN = "cache/gen/"
 if not path.exists(CACHE_FETCH):
@@ -21,6 +24,7 @@ if not path.exists(CACHE_FETCH):
 if not path.exists(CACHE_GEN):
     os.makedirs(CACHE_GEN)
 VERBOSE = False
+STARTTIME = None
 
 
 @dataclass
@@ -29,6 +33,9 @@ class RSSItem:
     link: str
     desc: str
     author: str
+
+    def get_short_id(self) -> str:
+        return self.link.strip("/").split("/")[-1]
 
 
 @dataclass
@@ -53,22 +60,31 @@ class ATOMItem:
     category: list[str]
     primary_category: str
 
+    def get_short_id(self) -> str:
+        return self.id.strip("/").split("/")[-1]
+
+    def is_update(self) -> bool:
+        return self.updated != self.published
+
     def to_markdown(self):
         return f"""\
 ### {self.title}
+
 > **Translated title here**  
 > Link: [{self.link_abs.strip("/").split("/")[-1]}]({self.link_abs})  
 > Comments: {self.comment}  
 > Category: **{self.primary_category}**, {", ".join(self.category)}  
 > Authors: {", ".join(self.author)}  
-> Date: {self.updated}{f" (Published @{self.published})" if self.updated != self.published else ""}  
+> Date: {self.updated}{f" (Published @{self.published})" if self.is_update() else ""}  
 
-***摘要:***  
+***摘要:*** 
+
 **这是摘要**
 
-***Abstract:***  
-{self.summary}
----
+***Abstract:***
+
+{utils.pre_process_abstract(self.summary)}
+
 """
 
 
@@ -93,16 +109,11 @@ def parse_atom(atom_str: str) -> list[ATOMItem]:
         author_elems = entry.xpath("./ns:author/ns:name", namespaces=nsmap)
         authors = [elem.text for elem in author_elems]
 
-        link_abs = entry.xpath("./ns:link[@rel='alternate']", namespaces=nsmap)[
-            0
-        ].attrib["href"]
-        link_pdf = entry.xpath("./ns:link[@title='pdf']", namespaces=nsmap)[0].attrib[
-            "href"
-        ]
+        link_abs = entry.xpath("./ns:link[@rel='alternate']", namespaces=nsmap)[0].attrib["href"]
+        link_pdf = entry.xpath("./ns:link[@title='pdf']", namespaces=nsmap)[0].attrib["href"]
 
-        primary_category = entry.xpath("./arxiv:primary_category", namespaces=nsmap)[
-            0
-        ].attrib["term"]
+        primary_category = entry.xpath("./arxiv:primary_category",
+                                       namespaces=nsmap)[0].attrib["term"]
         category_elems = entry.xpath("./ns:category", namespaces=nsmap)
         categories = [elem.attrib["term"] for elem in category_elems]
 
@@ -129,20 +140,18 @@ def parse_rss(rss_str: str) -> tuple[RSSMeta, list[RSSItem]]:
     nsmap["ns"] = nsmap[None]
     del nsmap[None]  # none key is not allow in lxml xpath
     title = xml.xpath("/rdf:RDF/ns:channel/ns:title", namespaces=nsmap)[0].text
-    description = xml.xpath("/rdf:RDF/ns:channel/ns:description", namespaces=nsmap)[
-        0
-    ].text
-    update_date = xml.xpath(
-        "/rdf:RDF/ns:channel/dc:date", namespaces=nsmap)[0].text
-    subject = xml.xpath("/rdf:RDF/ns:channel/dc:subject",
-                        namespaces=nsmap)[0].text
-    print(f"""MetaData
+    description = xml.xpath("/rdf:RDF/ns:channel/ns:description", namespaces=nsmap)[0].text
+    update_date = xml.xpath("/rdf:RDF/ns:channel/dc:date", namespaces=nsmap)[0].text
+    subject = xml.xpath("/rdf:RDF/ns:channel/dc:subject", namespaces=nsmap)[0].text
+
+    if VERBOSE:
+        print(f"""\
+MetaData
   Title - {title}
   Desc - {description}
   Date - {update_date}
   Subject - {subject}
-"""
-          )
+""")
     rss_metadata = RSSMeta(title=title, description=description,
                            update_date=update_date, subject=subject)
 
@@ -163,7 +172,6 @@ def parse_rss(rss_str: str) -> tuple[RSSMeta, list[RSSItem]]:
 
 
 def query_rss(subcategory="cs", force=False) -> str:
-    RSS_BASE = "http://arxiv.org/rss/"
     rss_url = RSS_BASE + subcategory
     rss_file_name = f"{datetime.date.today()}-{subcategory}.xml"
     rss_file_path = path.join(CACHE_FETCH, rss_file_name)
@@ -181,7 +189,6 @@ def query_rss(subcategory="cs", force=False) -> str:
 
 
 def query_atom(id_list, items_per_req=20, force=False, req_interval=3):
-    QUERY_BASE = "http://export.arxiv.org/api/query"
     start = 0
     atom_strs = []
     while start < len(id_list):
@@ -201,7 +208,7 @@ def query_atom(id_list, items_per_req=20, force=False, req_interval=3):
 
         params = {"id_list": id_list_str, "max_results": items_per_req}
         print(f"[INFO] query for {len(id_list_slice)} items")
-        atom_resp = requests.get(QUERY_BASE, params=params)
+        atom_resp = requests.get(API_BASE, params=params)
         with open(atom_file_path, "w") as f:
             f.write(atom_resp.text)
         print(f"[INFO] query done from {atom_resp.url}")
@@ -210,70 +217,80 @@ def query_atom(id_list, items_per_req=20, force=False, req_interval=3):
     return atom_strs
 
 
-def pre_process(raw_text: str) -> str:
-    return re.sub(r'^ {2}', ' ', raw_text, re.MULTILINE)
+def generate(cate_list: list[str], tag: str, args):
+    STARTTIME = utils.get_local_time(datetime.datetime.now())
+    date_filename = STARTTIME.strftime("%y%m%d.%I%p")
 
-def generate(cate_list: list[str], tag: str):
-    print(f"Querying RSS for Category: {cate_list}")
+    print(f"[STATUS] Querying RSS for Category: {cate_list}")
     id_list = []
     for cate in cate_list:
         rss_str = query_rss(cate)
         rss_meta, rss_items = parse_rss(rss_str)
-        id_list += [item.link.strip("/").split("/")[-1] for item in rss_items]
+        id_list += [item.get_short_id() for item in rss_items]
     id_list = list(set(id_list))
     id_list.sort(reverse=True)
 
-    print(f"Collecting details for {len(id_list)} papers")
+    print(f"[STATUS] Collecting details for {len(id_list)} papers")
     atom_strs = query_atom(id_list, items_per_req=20, force=False)
-    atom_items = []
+    atom_items: list[ATOMItem] = []
     for atom_str in atom_strs:
         atom_items += parse_atom(atom_str)
-
-    print(f"Generating markdown")
     cate2item = dict()
     for item in atom_items:
+        item.title = utils.pre_proc_title(item.title)
         if item.primary_category not in cate2item.keys():
             cate2item[item.primary_category] = []
         cate2item[item.primary_category].append(item)
     if VERBOSE:
-        for cate in cate2item.keys():
-            print(f"{cate}:{len(cate2item[cate])}; ", end="")
-        print("")
+        print("; ".join([f"{cate}:{len(cate2item[cate])}" for cate in cate2item]))
 
-    date = datetime.datetime.now().strftime("%Y%m%d.%I%p")
-    md_file_name = f"Feed-{date}-{tag}.md"
+    if args.translate_title:
+        print(f"[STATUS] Translating titles")
+
+    print(f"[STATUS] Generating markdown")
+    md_file_name = f"Feed-{date_filename}-{tag}.md"
     md_file_path = path.join(CACHE_GEN, md_file_name)
     with open(md_file_path, "w") as f:
         f.write(f"""\
-## Arxiv Feed \\[{tag}\\]
-> Fetched @ {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}  
+# Arxiv Feed \\[{tag}\\]
 > Published @ {rss_meta.update_date}
+> Fetched @ {STARTTIME.strftime("%Y-%m-%d %H:%M")} {datetime.datetime.tzname(STARTTIME)}  
 
 """)
-        for atom_item in atom_items:
-            f.write(atom_item.to_markdown())
-    print("Convert result to HTML")
+        for cate in cate2item:
+            if cate not in ArxivCategory.CS_CATEGORY.keys():
+                continue
+            f.write(f"""## {cate}, {ArxivCategory.ALL_CATEGORY[cate]}\n""")
+            for item in cate2item[cate]:
+                f.write(item.to_markdown())
+        for cate in cate2item:
+            if cate not in ArxivCategory.CS_CATEGORY.keys():
+                skips = [item.get_short_id() for item in cate2item[cate]]
+                f.write(f"> SKIP {cate} {','.join(skips)}  \n")
+
+    print("[STATUS] Convert result to HTML")
     with open(md_file_path, "r", encoding='utf-8') as input_file:
         text = input_file.read()
     html = markdown.markdown(text)
-    html_file_name = f"Feed-{date}-{tag}.html"
+    html_file_name = f"Feed-{date_filename}-{tag}.html"
     html_file_path = path.join(CACHE_GEN, html_file_name)
     with open(html_file_path, "w", encoding="utf-8", errors="xmlcharrefreplace") as output_file:
         output_file.write(html)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description='Fetch feed from arxiv by RSS and its API')
+    parser = argparse.ArgumentParser(description='Fetch feed from arxiv by RSS and its API')
     parser.add_argument('-V', '--verbose', default=False, action='store_true')
+    parser.add_argument('-T', '--translate_title', default=False, action='store_true')
+    parser.add_argument('-t', '--translate_abs', default=False, action='store_true')
     args = parser.parse_args()
     VERBOSE = args.verbose
-
-    generate(ArxivCategory.SYS_CATEGORY, "SYS")
+    generate(ArxivCategory.SYS_CATEGORY, "SYS", args)
     # generate(ArxivCategory.AI_CATEGORY, "AI")
 
 """
-TODO
-1. Breakline
-2. Updated tag
+TODO [] datetime
+TODO [] Special character
+TODO [] Translate
+TODO [] Math
 """
