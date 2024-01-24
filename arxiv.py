@@ -5,6 +5,7 @@ import os
 import os.path as path
 import pickle
 import time
+import webbrowser
 from dataclasses import dataclass
 
 import lxml.etree as etree
@@ -74,7 +75,7 @@ class ATOMItem:
         if translations is not None:
             if self.get_short_id() in translations:
                 title_trans = translations[self.get_short_id()][0]
-        
+
         return f"""\
 ### {self.title}
 
@@ -267,7 +268,7 @@ def generate(cate_list: list[str], tag: str, args):
             if translations[item.get_short_id()][0] is not None:
                 continue
             title_trans = tencent_translator.translate(item.title)
-            if title_trans is None:
+            if title_trans is None or len(title_trans) == 0:
                 utils.pkl_dump(translations, CACHE_TRANS)
                 raise Exception
             else:
@@ -304,12 +305,16 @@ def generate(cate_list: list[str], tag: str, args):
     with open(html_file_path, "w", encoding="utf-8", errors="xmlcharrefreplace") as output_file:
         output_file.write(html)
 
+    if not args.no_open_browser:
+        webbrowser.open_new_tab(os.path.abspath(html_file_path))
+        
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Fetch feed from arxiv by RSS and its API')
     parser.add_argument('-V', '--verbose', default=False, action='store_true')
-    parser.add_argument('-T', '--translate_title', default=False, action='store_true')
-    parser.add_argument('-t', '--translate_abs', default=False, action='store_true')
+    parser.add_argument('-T', '--translate-title', default=False, action='store_true')
+    parser.add_argument('-t', '--translate-abs', default=False, action='store_true')
+    parser.add_argument('--no-open-browser', default=False, action='store_true')
     args = parser.parse_args()
     VERBOSE = args.verbose
     generate(ArxivCategory.SYS_CATEGORY, "SYS", args)
