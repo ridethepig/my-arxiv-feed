@@ -26,8 +26,6 @@ if not path.exists(CACHE_FETCH):
     os.makedirs(CACHE_FETCH)
 if not path.exists(CACHE_GEN):
     os.makedirs(CACHE_GEN)
-VERBOSE = False
-STARTTIME = None
 
 
 def query_rss(subcategory="cs", force=False) -> str:
@@ -35,7 +33,7 @@ def query_rss(subcategory="cs", force=False) -> str:
     rss_file_name = f"{datetime.date.today()}-{subcategory}.xml"
     rss_file_path = path.join(CACHE_FETCH, rss_file_name)
     if path.exists(rss_file_path) and not force:
-        logger.info(f"use cached `{rss_file_path}`")
+        logger.warning(f"use cached `{rss_file_path}`")
         with open(rss_file_path, "rb") as f:
             rss_str = f.read()
         return rss_str
@@ -59,7 +57,7 @@ def query_atom(id_list, items_per_req=20, force=False, req_interval=3):
         atom_file_path = path.join(CACHE_FETCH, atom_file_name)
 
         if path.exists(atom_file_path) and not force:
-            logger.info(f"use cached `{atom_file_path}`")
+            logger.warning(f"use cached `{atom_file_path}`")
             with open(atom_file_path, "rb") as f:
                 atom_str = f.read()
                 atom_strs.append(atom_str)
@@ -76,10 +74,31 @@ def query_atom(id_list, items_per_req=20, force=False, req_interval=3):
     return atom_strs
 
 
-def generate(cate_list: list[str], tag: str, args):
-    from database import Trslt
-    STARTTIME = utils.get_local_time(datetime.datetime.now())
+def translate(atom_items: list[ATOMItem]):
     translations: dict[str, list[str | None]] = None
+    if path.exists(CACHE_TRANS):
+        translations = utils.pkl_load(CACHE_TRANS)
+        logger.info(f"Loaded translation cache file `{CACHE_TRANS}`")
+    else:
+        translations = {}
+
+    logger.info(f"Translating titles")
+    for item in atom_items:
+        if item.id_short not in translations:
+            translations[item.id_short] = [None, None]
+        if translations[item.id_short][0] is not None:
+            continue
+        title_trans = tencent_translator.translate(item.title)
+        if title_trans is None or len(title_trans) == 0:
+            utils.pkl_dump(translations, CACHE_TRANS)
+            raise Exception
+        else:
+            translations[item.id_short][0] = title_trans
+    utils.pkl_dump(translations, CACHE_TRANS)
+    return translations
+
+def generate(cate_list: list[str], tag: str, args):
+    start_time = utils.get_local_time(datetime.datetime.now())
 
     logger.info(f"Querying RSS for Category: {cate_list}")
     id_list = []
@@ -112,25 +131,7 @@ def generate(cate_list: list[str], tag: str, args):
     logger.debug("; ".join([f"{cate}:{len(cate2item[cate])}" for cate in cate2item]))
 
     if args.translate_title:
-        if path.exists(CACHE_TRANS):
-            translations = utils.pkl_load(CACHE_TRANS)
-            logger.info(f"Loaded translation cache file `{CACHE_TRANS}`")
-        else:
-            translations = {}
-
-        logger.info(f"Translating titles")
-        for item in atom_items:
-            if item.id_short not in translations:
-                translations[item.id_short] = [None, None]
-            if translations[item.id_short][0] is not None:
-                continue
-            title_trans = tencent_translator.translate(item.title)
-            if title_trans is None or len(title_trans) == 0:
-                utils.pkl_dump(translations, CACHE_TRANS)
-                raise Exception
-            else:
-                translations[item.id_short][0] = title_trans
-        utils.pkl_dump(translations, CACHE_TRANS)
+        translations = translate(atom_items)
 
     logger.info(f"Generating markdown")
     md_file_name = f"Feed-{date_filename}-{tag}.md"
@@ -139,7 +140,7 @@ def generate(cate_list: list[str], tag: str, args):
         f.write(f"""\
 # Arxiv Feed \\[{tag}\\]
 > Published @ {rss_meta.update_date}
-> Fetched @ {STARTTIME.strftime("%Y-%m-%d %H:%M")} {datetime.datetime.tzname(STARTTIME)}  
+> Fetched @ {start_time.strftime("%Y-%m-%d %H:%M")} {datetime.datetime.tzname(start_time)}  
 
 """)
         for cate in cate2item:
@@ -150,7 +151,7 @@ def generate(cate_list: list[str], tag: str, args):
             skips = [item.id_short for item in skip2item[cate]]
             f.write(f"> SKIP {cate} {','.join(skips)}  \n")
 
-    print("[STATUS] Convert result to HTML")
+    logger.info("Convert result to HTML")
     with open(md_file_path, "r", encoding='utf-8') as input_file:
         text = input_file.read()
     html = markdown.markdown(text)
