@@ -1,23 +1,31 @@
 import datetime
-import re
+import logging
 import pickle
+import re
 
 import pytz
 
 _local_tz = pytz.timezone("Asia/Shanghai")
 _utc_tz = pytz.timezone("UTC")
+_arxiv_tz = pytz.timezone("EST")
 
 
 def get_local_time(raw_datetime: datetime.datetime | str) -> datetime.datetime:
-    if raw_datetime is str:
+    if type(raw_datetime) is str:
         raw_datetime = datetime.datetime.fromisoformat(raw_datetime)
     return raw_datetime.astimezone(_local_tz)
 
 
 def get_utc_time(raw_datetime: datetime.datetime | str) -> datetime.datetime:
-    if raw_datetime is str:
+    if type(raw_datetime) is str:
         raw_datetime = datetime.datetime.fromisoformat(raw_datetime)
     return raw_datetime.astimezone(_utc_tz)
+
+
+def get_arxiv_time(raw_datetime: datetime.datetime | str) -> datetime.datetime:
+    if type(raw_datetime) is str:
+        raw_datetime = datetime.datetime.fromisoformat(raw_datetime)
+    return raw_datetime.astimezone(_arxiv_tz)
 
 
 def pre_process_abstract(raw_text: str) -> str:
@@ -46,3 +54,25 @@ def pkl_load(obj_path):
 def pkl_dump(obj, obj_path):
     with open(obj_path, "wb") as pkl_file:
         pickle.dump(obj, pkl_file)
+
+
+logger = logging.getLogger("arxiv-feed")
+
+
+def logger_init(level_print: int, level_file: int | None = None):
+    logger.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(
+        '%(asctime)s.%(msecs)d [%(levelname)s] %(message)s', datefmt='%y%m%d.%H:%M:%S')
+    short_formatter = logging.Formatter(
+        '[%(levelname)s] %(message)s', datefmt='%y%m%d.%H:%M:%S')
+    # file handler
+    if level_file is not None:
+        fh = logging.FileHandler('arxiv-feed.log')
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(formatter)
+        logger.addHandler(fh)
+    # console handler
+    ch = logging.StreamHandler()
+    ch.setLevel(level_print)
+    ch.setFormatter(short_formatter)
+    logger.addHandler(ch)
