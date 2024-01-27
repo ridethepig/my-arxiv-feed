@@ -130,6 +130,7 @@ def generate(cate_list: list[str], tag: str, args):
         cate2item[item.primary_category].append(item)
     logger.debug("; ".join([f"{cate}:{len(cate2item[cate])}" for cate in cate2item]))
 
+    translations = None
     if args.translate_title:
         translations = translate(atom_items)
 
