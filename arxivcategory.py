@@ -17,4 +17,4 @@ CS_CATEGORY = {
 }
 
 AI_CATEGORY = ["cs.AI", "cs.CV", "cs.LG"]
-SYS_CATEGORY = ["cs.AR", "cs.PL", "cs.DC", "cs.DB", "cs.NI"]
+SYS_CATEGORY = ["cs.AR", "cs.PL", "cs.DC", "cs.DB"]

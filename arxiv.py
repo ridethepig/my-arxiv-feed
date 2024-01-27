@@ -10,11 +10,11 @@ from collections import defaultdict
 import markdown
 import requests
 
-import ArxivCategory
+import arxivcategory
 import tencent_translator
 import utils
-from arxivdata import ATOMItem, RSSItem, RSSMeta
-from arxivdata import parse_atom, parse_rss
+from arxivdata import ATOMItem, parse_atom, parse_rss
+from database import translation_get, translation_save
 from utils import logger
 
 RSS_BASE = "http://arxiv.org/rss/"
@@ -74,28 +74,29 @@ def query_atom(id_list, items_per_req=20, force=False, req_interval=3):
     return atom_strs
 
 
-def translate(atom_items: list[ATOMItem]):
-    translations: dict[str, list[str | None]] = None
-    if path.exists(CACHE_TRANS):
-        translations = utils.pkl_load(CACHE_TRANS)
-        logger.info(f"Loaded translation cache file `{CACHE_TRANS}`")
-    else:
-        translations = {}
-
-    logger.info(f"Translating titles")
-    for item in atom_items:
-        if item.id_short not in translations:
-            translations[item.id_short] = [None, None]
-        if translations[item.id_short][0] is not None:
-            continue
-        title_trans = tencent_translator.translate(item.title)
-        if title_trans is None or len(title_trans) == 0:
-            utils.pkl_dump(translations, CACHE_TRANS)
+def translate(atom_item: ATOMItem, tr_option: tuple[bool, bool], force=False, delay=0.5) -> tuple[bool, bool]:
+    if not tr_option[0] and not tr_option[1]:
+        return (None, None)
+    logger.debug(f"Translating for {atom_item.id_short}, switch (title, abs)={tr_option}")
+    tr_title, tr_abs = translation_get(atom_item.id_short)
+    if tr_option[0] and (tr_title is None or force):
+        tr_title = tencent_translator.translate(atom_item.title)
+        if tr_title is None or len(tr_title) == 0:
             raise Exception
         else:
-            translations[item.id_short][0] = title_trans
-    utils.pkl_dump(translations, CACHE_TRANS)
-    return translations
+            translation_save(atom_item.id_short, title=tr_title)
+        time.sleep(delay)
+    if tr_option[1] and (tr_abs is None or force):
+        summary = utils.pre_process_abstract(atom_item.summary)
+        tr_abs = tencent_translator.translate(summary)
+        if tr_abs is None or len(tr_abs) == 0:
+            raise Exception
+        else:
+            translation_save(atom_item.id_short, abstract=tr_abs)
+        time.sleep(delay)
+
+    return tr_title, tr_abs
+
 
 def generate(cate_list: list[str], tag: str, args):
     start_time = utils.get_local_time(datetime.datetime.now())
@@ -103,7 +104,7 @@ def generate(cate_list: list[str], tag: str, args):
     logger.info(f"Querying RSS for Category: {cate_list}")
     id_list = []
     for cate in cate_list:
-        rss_str = query_rss(cate)
+        rss_str = query_rss(cate, args.refetch)
         rss_meta, rss_items = parse_rss(rss_str)
         id_list += [item.id_short for item in rss_items]
     id_list = list(set(id_list))
@@ -112,7 +113,7 @@ def generate(cate_list: list[str], tag: str, args):
     date_filename = utils.get_arxiv_time(rss_meta.update_date).strftime("%y%m%d")
 
     logger.info(f"Collecting details for {len(id_list)} papers")
-    atom_strs = query_atom(id_list, items_per_req=20, force=False)
+    atom_strs = query_atom(id_list, items_per_req=20, force=args.refetch)
     atom_items: list[ATOMItem] = []
     for atom_str in atom_strs:
         atom_items += parse_atom(atom_str)
@@ -124,15 +125,11 @@ def generate(cate_list: list[str], tag: str, args):
             if item.primary_category not in cate_list:
                 skip2item[item.primary_category].append(item)
                 continue
-        if item.primary_category not in ArxivCategory.CS_CATEGORY:
+        if item.primary_category not in arxivcategory.CS_CATEGORY:
             skip2item[item.primary_category].append(item)
             continue
         cate2item[item.primary_category].append(item)
     logger.debug("; ".join([f"{cate}:{len(cate2item[cate])}" for cate in cate2item]))
-
-    translations = None
-    if args.translate_title:
-        translations = translate(atom_items)
 
     logger.info(f"Generating markdown")
     md_file_name = f"Feed-{date_filename}-{tag}.md"
@@ -145,8 +142,11 @@ def generate(cate_list: list[str], tag: str, args):
 
 """)
         for cate in cate2item:
-            f.write(f"""## {cate}, {ArxivCategory.ALL_CATEGORY[cate]}\n""")
+            f.write(
+                f"""## {cate}, {arxivcategory.ALL_CATEGORY[cate]}\n> {len(cate2item[cate])} papers today\n""")
             for item in cate2item[cate]:
+                translations = translate(
+                    item, (args.translate_title, args.translate_abs), args.translate_force)
                 f.write(item.to_markdown(translations))
         for cate in skip2item:
             skips = [item.id_short for item in skip2item[cate]]
@@ -168,8 +168,10 @@ def generate(cate_list: list[str], tag: str, args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Fetch feed from arxiv by RSS and its API')
     parser.add_argument('-V', '--verbose', default=False, action='store_true')
-    parser.add_argument('-T', '--translate-title', default=False, action='store_true')
-    parser.add_argument('-t', '--translate-abs', default=False, action='store_true')
+    parser.add_argument('-r', '--refetch', default=False, action='store_true')
+    parser.add_argument('--translate-title', default=False, action='store_true')
+    parser.add_argument('--translate-abs', default=False, action='store_true')
+    parser.add_argument('--translate-force', default=False, action='store_true')
     parser.add_argument('--no-open-browser', default=False, action='store_true')
     parser.add_argument('--strict', default=False, action='store_true')
     args = parser.parse_args()
@@ -177,13 +179,11 @@ if __name__ == "__main__":
         utils.logger_init(utils.logging.DEBUG)
     else:
         utils.logger_init(utils.logging.INFO)
-    generate(ArxivCategory.SYS_CATEGORY, "SYS", args)
+    generate(arxivcategory.SYS_CATEGORY, "SYS", args)
     # generate(ArxivCategory.AI_CATEGORY, "AI")
 
 """
-TODO [] datetime for each item
 TODO [] Special character
-TODO [] Translate
 TODO [] Math
 TODO [] Cache to sqlite instead of pickle
 """

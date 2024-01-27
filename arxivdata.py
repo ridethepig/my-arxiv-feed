@@ -42,27 +42,26 @@ class ATOMItem:
     def is_update(self) -> bool:
         return self.updated != self.published
 
-    def to_markdown(self, translations=None):
-        title_trans = None
-        if translations is not None:
-            if self.id_short in translations:
-                title_trans = translations[self.id_short][0]
+    def to_markdown(self, translations: tuple[str | None, str | None] = (None, None)):
+        tr_title, tr_abs = translations
+        tr_title = tr_title or "这是标题"
+        tr_abs = tr_abs or "这是摘要"
 
         return f"""\
 ### {self.title}
 
-> **{"标题" if title_trans is None else title_trans}**  
+> **{tr_title}**  
 > Link: [{self.id_short}]({self.link_abs})  
 > Comments: {self.comment}  
 > Category: **{self.primary_category}**, {", ".join(self.category)}  
 > Authors: {", ".join(self.author)}  
 > Date: {self.updated}{f" (Published @{self.published})" if self.is_update() else ""}  
 
-***摘要:*** 
+**摘要:**
 
-**这是摘要**
+{tr_abs}
 
-***Abstract:***
+**Abstract:**
 
 {utils.pre_process_abstract(self.summary)}
 
