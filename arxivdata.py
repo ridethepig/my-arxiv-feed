@@ -16,6 +16,9 @@ class RSSItem:
     author: str
     id_short: str
 
+    def is_update(self) -> bool:
+        return self.title.find("UPDATED)") != -1
+
 
 @dataclass
 class RSSMeta:

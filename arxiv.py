@@ -99,7 +99,7 @@ def generate_markdown(cate2item, skip2item, tag, pubtime, fetchtime) -> str:
     return result
 
 
-def generate_from_history(date: str) -> [list[ATOMItem], str]:
+def generate_from_history(date: str, args) -> tuple[list[ATOMItem], str]:
     logger.info(f"Retrieving paper back in {date} from database")
     arxivtime = datetime.datetime.strptime(date, "%Y%m%d")
     arxivtime = arxivtime.replace(hour=20, minute=30, tzinfo=utils._arxiv_tz).isoformat()
@@ -114,21 +114,21 @@ def generate_from_history(date: str) -> [list[ATOMItem], str]:
     return atom_items, arxivtime
 
 
-def generate_from_query(cate_list: list[str]) -> [list[ATOMItem], str]:
+def generate_from_query(cate_list: list[str], args) -> tuple[list[ATOMItem], str]:
     logger.info(f"Querying RSS for Category: {cate_list}")
     id_list = []
     for cate in cate_list:
         rss_str = query_rss(cate, args.refetch)
         rss_meta, rss_items = parse_rss(rss_str)
         id_list += [item.id_short for item in rss_items]
-    id_list = list(set(id_list))
-    id_list.sort(reverse=True)
+    id_list = sorted(list(set(id_list)), reverse=True)
 
     logger.info(f"Collecting details for {len(id_list)} papers")
     atom_strs = query_atom(id_list, items_per_req=20, force=args.refetch)
     atom_items: list[ATOMItem] = []
     for atom_str in atom_strs:
         atom_items += parse_atom(atom_str)
+    logger.info(f"Flushing data to db")
     for atom_item in atom_items:
         db.daily_set(MainLogItem(atom_item.arxivid, rss_meta.update_date, None))
         db.paper_meta_set(atom_item)
@@ -139,9 +139,15 @@ def generate_from_query(cate_list: list[str]) -> [list[ATOMItem], str]:
 def generate(cate_list: list[str], tag: str, args):
     db.init_db()
     if args.history is not None:
-        atom_items, arxivtime = generate_from_history(args.history)
+        atom_items, arxivtime = generate_from_history(args.history, args)
     else:
-        atom_items, arxivtime = generate_from_query(cate_list)
+        atom_items, arxivtime = generate_from_query(cate_list, args)
+    if args.onlynew:
+        update_items = list(filter(lambda item: item.is_update(), atom_items))
+        atom_items = filter(lambda item: not item.is_update(), atom_items)
+        if len(update_items) != 0:
+            logger.warning("%d updates filtered out: %s", len(update_items),
+                           ", ".join([item.arxivid for item in update_items]))
 
     cate2item: dict[str, list[ATOMItem]] = defaultdict(list)
     skip2item: dict[str, list[ATOMItem]] = defaultdict(list)
@@ -189,6 +195,7 @@ if __name__ == "__main__":
     parser.add_argument('--translate-force', default=False, action='store_true')
     parser.add_argument('--no-open-browser', default=False, action='store_true')
     parser.add_argument('--strict', default=False, action='store_true')
+    parser.add_argument('--onlynew', default=False, action='store_true')
     parser.add_argument("--history", type=str)
     args = parser.parse_args()
     if args.verbose:
@@ -196,7 +203,7 @@ if __name__ == "__main__":
     else:
         utils.logger_init(utils.logging.INFO)
     generate(arxivcategory.SYS_CATEGORY, "SYS", args)
-    # generate(ArxivCategory.AI_CATEGORY, "AI")
+    # generate(arxivcategory.AI_CATEGORY, "AI", args)
 
 """
 TODO [] Special character
