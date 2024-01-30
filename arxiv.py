@@ -49,7 +49,7 @@ def translate(atom_item: ATOMItem, tr_option: tuple[bool, bool], force=False, de
     return trans_cache.title, trans_cache.abs
 
 
-def ATOM2MD(metadata: ATOMItem, translations: tuple[str | None, str | None] = (None, None)):
+def ATOM2MD(metadata: ATOMItem, translations: tuple[str | None, str | None] = (None, None)) -> str:
     tr_title, tr_abs = translations
     tr_title = tr_title or "这是标题"
     tr_abs = tr_abs or "这是摘要"
@@ -75,10 +75,46 @@ def ATOM2MD(metadata: ATOMItem, translations: tuple[str | None, str | None] = (N
 """
 
 
-def generate(cate_list: list[str], tag: str, args):
-    start_time = utils.get_local_time(datetime.datetime.now())
-    db.init_db()
-    print(db.conn)
+def generate_markdown(cate2item, skip2item, tag, pubtime, fetchtime) -> str:
+    import io
+    f = io.StringIO()
+    f.write(f"""\
+# Arxiv Feed \\[{tag}\\]
+> Published @ {pubtime}  
+> Fetched @ {fetchtime}
+
+""")
+    for cate in cate2item:
+        f.write(
+            f"""## {cate}, {arxivcategory.ALL_CATEGORY[cate]}\n> {len(cate2item[cate])} papers today\n""")
+        for item in cate2item[cate]:
+            translations = translate(
+                item, (args.translate_title, args.translate_abs), args.translate_force)
+            f.write(ATOM2MD(item, translations))
+    for cate in skip2item:
+        skips = [item.arxivid for item in skip2item[cate]]
+        f.write(f"> SKIP {cate} {','.join(skips)}  \n")
+    result = f.getvalue()
+    f.close()
+    return result
+
+
+def generate_from_history(date: str) -> [list[ATOMItem], str]:
+    logger.info(f"Retrieving paper back in {date} from database")
+    arxivtime = datetime.datetime.strptime(date, "%Y%m%d")
+    arxivtime = arxivtime.replace(hour=20, minute=30, tzinfo=utils._arxiv_tz).isoformat()
+    id_lists = db.daily_get_by_date(arxivtime)
+    atom_items = []
+    for arxivid in id_lists:
+        meta_item = db.paper_meta_get(arxivid)
+        if meta_item is None:
+            logger.error(f"record not found {arxivid}")
+            continue
+        atom_items.append(meta_item)
+    return atom_items, arxivtime
+
+
+def generate_from_query(cate_list: list[str]) -> [list[ATOMItem], str]:
     logger.info(f"Querying RSS for Category: {cate_list}")
     id_list = []
     for cate in cate_list:
@@ -87,9 +123,6 @@ def generate(cate_list: list[str], tag: str, args):
         id_list += [item.id_short for item in rss_items]
     id_list = list(set(id_list))
     id_list.sort(reverse=True)
-    for arxivid in id_list:
-        db.daily_set(MainLogItem(arxivid, rss_meta.update_date, None))
-    db.conn.commit()
 
     logger.info(f"Collecting details for {len(id_list)} papers")
     atom_strs = query_atom(id_list, items_per_req=20, force=args.refetch)
@@ -97,8 +130,19 @@ def generate(cate_list: list[str], tag: str, args):
     for atom_str in atom_strs:
         atom_items += parse_atom(atom_str)
     for atom_item in atom_items:
+        db.daily_set(MainLogItem(atom_item.arxivid, rss_meta.update_date, None))
         db.paper_meta_set(atom_item)
     db.conn.commit()
+    return atom_items, rss_meta.update_date
+
+
+def generate(cate_list: list[str], tag: str, args):
+    db.init_db()
+    if args.history is not None:
+        atom_items, arxivtime = generate_from_history(args.history)
+    else:
+        atom_items, arxivtime = generate_from_query(cate_list)
+
     cate2item: dict[str, list[ATOMItem]] = defaultdict(list)
     skip2item: dict[str, list[ATOMItem]] = defaultdict(list)
     for item in atom_items:
@@ -114,38 +158,26 @@ def generate(cate_list: list[str], tag: str, args):
     logger.debug("; ".join([f"{cate}:{len(cate2item[cate])}" for cate in cate2item]))
 
     logger.info(f"Generating markdown")
-    date_filename = utils.get_arxiv_time(rss_meta.update_date).strftime("%y%m%d")
-    md_file_name = f"Feed-{date_filename}-{tag}.md"
-    md_file_path = path.join(CACHE_GEN, md_file_name)
-    with open(md_file_path, "w") as f:
-        f.write(f"""\
-# Arxiv Feed \\[{tag}\\]
-> Published @ {rss_meta.update_date}
-> Fetched @ {start_time.strftime("%Y-%m-%d %H:%M")} {datetime.datetime.tzname(start_time)}  
-
-""")
-        for cate in cate2item:
-            f.write(
-                f"""## {cate}, {arxivcategory.ALL_CATEGORY[cate]}\n> {len(cate2item[cate])} papers today\n""")
-            for item in cate2item[cate]:
-                translations = translate(
-                    item, (args.translate_title, args.translate_abs), args.translate_force)
-                f.write(ATOM2MD(item, translations))
-        for cate in skip2item:
-            skips = [item.arxivid for item in skip2item[cate]]
-            f.write(f"> SKIP {cate} {','.join(skips)}  \n")
+    arxivdate = utils.get_arxiv_time(arxivtime).strftime("%y%m%d")
+    md_filename = f"Feed-{arxivdate}-{tag}.md"
+    md_filepath = path.join(CACHE_GEN, md_filename)
+    fetchtime = utils.get_local_time(datetime.datetime.now())
+    fetchtime = f"""{fetchtime.strftime("%Y-%m-%d %H:%M")} {datetime.datetime.tzname(fetchtime)}"""
+    with open(md_filepath, "w") as f:
+        f.write(generate_markdown(cate2item, skip2item, tag, arxivtime, fetchtime))
 
     logger.info("Convert result to HTML")
-    with open(md_file_path, "r", encoding='utf-8') as input_file:
+    with open(md_filepath, "r", encoding='utf-8') as input_file:
         text = input_file.read()
     html = markdown.markdown(text)
-    html_file_name = f"Feed-{date_filename}-{tag}.html"
-    html_file_path = path.join(CACHE_GEN, html_file_name)
-    with open(html_file_path, "w", encoding="utf-8", errors="xmlcharrefreplace") as output_file:
+    html_filename = f"Feed-{arxivdate}-{tag}.html"
+    html_filepath = path.join(CACHE_GEN, html_filename)
+    with open(html_filepath, "w", encoding="utf-8", errors="xmlcharrefreplace") as output_file:
         output_file.write(html)
 
+    logger.info("Finish")
     if not args.no_open_browser:
-        webbrowser.open_new_tab(os.path.abspath(html_file_path))
+        webbrowser.open_new_tab(os.path.abspath(html_filepath))
 
 
 if __name__ == "__main__":
@@ -157,6 +189,7 @@ if __name__ == "__main__":
     parser.add_argument('--translate-force', default=False, action='store_true')
     parser.add_argument('--no-open-browser', default=False, action='store_true')
     parser.add_argument('--strict', default=False, action='store_true')
+    parser.add_argument("--history", type=str)
     args = parser.parse_args()
     if args.verbose:
         utils.logger_init(utils.logging.DEBUG)
@@ -168,5 +201,4 @@ if __name__ == "__main__":
 """
 TODO [] Special character
 TODO [] Math
-TODO [] Cache to sqlite instead of pickle
 """
