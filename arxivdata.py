@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+
 import lxml.etree as etree
 
 import utils
@@ -26,8 +27,8 @@ class RSSMeta:
 
 @dataclass
 class ATOMItem:
+    arxivid: str
     id: str
-    id_short: str
     updated: str
     published: str
     title: str
@@ -41,31 +42,6 @@ class ATOMItem:
 
     def is_update(self) -> bool:
         return self.updated != self.published
-
-    def to_markdown(self, translations: tuple[str | None, str | None] = (None, None)):
-        tr_title, tr_abs = translations
-        tr_title = tr_title or "这是标题"
-        tr_abs = tr_abs or "这是摘要"
-
-        return f"""\
-### {self.title}
-
-> **{tr_title}**  
-> Link: [{self.id_short}]({self.link_abs})  
-> Comments: {self.comment}  
-> Category: **{self.primary_category}**, {", ".join(self.category)}  
-> Authors: {", ".join(self.author)}  
-> Date: {self.updated}{f" (Published @{self.published})" if self.is_update() else ""}  
-
-**摘要:**
-
-{tr_abs}
-
-**Abstract:**
-
-{utils.pre_process_abstract(self.summary)}
-
-"""
 
 
 def parse_atom(atom_str: str) -> list[ATOMItem]:
@@ -101,7 +77,7 @@ def parse_atom(atom_str: str) -> list[ATOMItem]:
 
         atom_item = ATOMItem(
             id=id,
-            id_short=id_short,
+            arxivid=id_short,
             updated=updated,
             published=published,
             title=title.replace('\n', ''),

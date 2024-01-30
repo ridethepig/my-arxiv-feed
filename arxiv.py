@@ -1,6 +1,5 @@
 import argparse
 import datetime
-import hashlib
 import os
 import os.path as path
 import time
@@ -8,99 +7,78 @@ import webbrowser
 from collections import defaultdict
 
 import markdown
-import requests
 
 import arxivcategory
+import db
 import tencent_translator
 import utils
 from arxivdata import ATOMItem, parse_atom, parse_rss
-from database import translation_get, translation_save
+from arxivquery import query_atom, query_rss
+from config import CACHE_GEN
+from db import MainLogItem, TransItem
 from utils import logger
-
-RSS_BASE = "http://arxiv.org/rss/"
-API_BASE = "http://export.arxiv.org/api/query"
-CACHE_FETCH = "cache/fetch/"
-CACHE_GEN = "cache/gen/"
-CACHE_TRANS = "cache/trans.pkl"
-if not path.exists(CACHE_FETCH):
-    os.makedirs(CACHE_FETCH)
-if not path.exists(CACHE_GEN):
-    os.makedirs(CACHE_GEN)
-
-
-def query_rss(subcategory="cs", force=False) -> str:
-    rss_url = RSS_BASE + subcategory
-    rss_file_name = f"{datetime.date.today()}-{subcategory}.xml"
-    rss_file_path = path.join(CACHE_FETCH, rss_file_name)
-    if path.exists(rss_file_path) and not force:
-        logger.warning(f"use cached `{rss_file_path}`")
-        with open(rss_file_path, "rb") as f:
-            rss_str = f.read()
-        return rss_str
-    logger.info(f"getting rss from {rss_url}")
-    rss_resp = requests.get(rss_url)
-    with open(rss_file_path, "w") as f:
-        f.write(rss_resp.text)
-    logger.info(f"rss got from {rss_url}")
-    return rss_resp.text.encode()
-
-
-def query_atom(id_list, items_per_req=20, force=False, req_interval=3):
-    start = 0
-    atom_strs = []
-    while start < len(id_list):
-        id_list_slice = id_list[start: start + items_per_req]
-        start += items_per_req
-        id_list_str = ",".join(id_list_slice)
-        id_list_hash = hashlib.sha256(id_list_str.encode()).hexdigest()
-        atom_file_name = f"{datetime.date.today()}-pagesize{items_per_req}-{id_list_hash}.atom"
-        atom_file_path = path.join(CACHE_FETCH, atom_file_name)
-
-        if path.exists(atom_file_path) and not force:
-            logger.warning(f"use cached `{atom_file_path}`")
-            with open(atom_file_path, "rb") as f:
-                atom_str = f.read()
-                atom_strs.append(atom_str)
-            continue
-
-        params = {"id_list": id_list_str, "max_results": items_per_req}
-        logger.info(f"query for {len(id_list_slice)} items")
-        atom_resp = requests.get(API_BASE, params=params)
-        with open(atom_file_path, "w") as f:
-            f.write(atom_resp.text)
-        logger.info(f"query done from {atom_resp.url}")
-        atom_strs.append(atom_resp.text.encode())
-        time.sleep(req_interval)
-    return atom_strs
 
 
 def translate(atom_item: ATOMItem, tr_option: tuple[bool, bool], force=False, delay=0.5) -> tuple[bool, bool]:
     if not tr_option[0] and not tr_option[1]:
         return (None, None)
-    logger.debug(f"Translating for {atom_item.id_short}, switch (title, abs)={tr_option}")
-    tr_title, tr_abs = translation_get(atom_item.id_short)
-    if tr_option[0] and (tr_title is None or force):
-        tr_title = tencent_translator.translate(atom_item.title)
-        if tr_title is None or len(tr_title) == 0:
+    _title = 'Title' if tr_option[0] else ''
+    _abs = 'Abstract' if tr_option[1] else ''
+    logger.debug("Translating %s%s for %s", _title, _abs, atom_item.arxivid)
+    trans_cache = db.translation_get(atom_item.arxivid)
+    if trans_cache is None:
+        trans_cache = TransItem(atom_item.arxivid, None, None)
+    if tr_option[0] and (trans_cache.title is None or force):
+        trans_cache.title = tencent_translator.translate(atom_item.title)
+        if trans_cache.title is None or len(trans_cache.title) == 0:
+            db.conn.commit()
             raise Exception
         else:
-            translation_save(atom_item.id_short, title=tr_title)
+            db.translation_set(trans_cache)
         time.sleep(delay)
-    if tr_option[1] and (tr_abs is None or force):
+    if tr_option[1] and (trans_cache.abs is None or force):
         summary = utils.pre_process_abstract(atom_item.summary)
-        tr_abs = tencent_translator.translate(summary)
-        if tr_abs is None or len(tr_abs) == 0:
+        trans_cache.abs = tencent_translator.translate(summary)
+        if trans_cache.abs is None or len(trans_cache.abs) == 0:
+            db.conn.commit()
             raise Exception
         else:
-            translation_save(atom_item.id_short, abstract=tr_abs)
+            db.translation_set(trans_cache)
         time.sleep(delay)
+    db.conn.commit()
+    return trans_cache.title, trans_cache.abs
 
-    return tr_title, tr_abs
+
+def ATOM2MD(metadata: ATOMItem, translations: tuple[str | None, str | None] = (None, None)):
+    tr_title, tr_abs = translations
+    tr_title = tr_title or "这是标题"
+    tr_abs = tr_abs or "这是摘要"
+
+    return f"""\
+### {metadata.title}
+
+> **{tr_title}**  
+> Link: [{metadata.arxivid}]({metadata.link_abs})  
+> Comments: {metadata.comment}  
+> Category: **{metadata.primary_category}**, {", ".join(metadata.category)}  
+> Authors: {", ".join(metadata.author)}  
+> Date: {metadata.updated}{f" (Published @{metadata.published})" if metadata.is_update() else ""}  
+
+**摘要:**
+
+{tr_abs}
+
+**Abstract:**
+
+{utils.pre_process_abstract(metadata.summary)}
+
+"""
 
 
 def generate(cate_list: list[str], tag: str, args):
     start_time = utils.get_local_time(datetime.datetime.now())
-
+    db.init_db()
+    print(db.conn)
     logger.info(f"Querying RSS for Category: {cate_list}")
     id_list = []
     for cate in cate_list:
@@ -109,14 +87,18 @@ def generate(cate_list: list[str], tag: str, args):
         id_list += [item.id_short for item in rss_items]
     id_list = list(set(id_list))
     id_list.sort(reverse=True)
-
-    date_filename = utils.get_arxiv_time(rss_meta.update_date).strftime("%y%m%d")
+    for arxivid in id_list:
+        db.daily_set(MainLogItem(arxivid, rss_meta.update_date, None))
+    db.conn.commit()
 
     logger.info(f"Collecting details for {len(id_list)} papers")
     atom_strs = query_atom(id_list, items_per_req=20, force=args.refetch)
     atom_items: list[ATOMItem] = []
     for atom_str in atom_strs:
         atom_items += parse_atom(atom_str)
+    for atom_item in atom_items:
+        db.paper_meta_set(atom_item)
+    db.conn.commit()
     cate2item: dict[str, list[ATOMItem]] = defaultdict(list)
     skip2item: dict[str, list[ATOMItem]] = defaultdict(list)
     for item in atom_items:
@@ -132,6 +114,7 @@ def generate(cate_list: list[str], tag: str, args):
     logger.debug("; ".join([f"{cate}:{len(cate2item[cate])}" for cate in cate2item]))
 
     logger.info(f"Generating markdown")
+    date_filename = utils.get_arxiv_time(rss_meta.update_date).strftime("%y%m%d")
     md_file_name = f"Feed-{date_filename}-{tag}.md"
     md_file_path = path.join(CACHE_GEN, md_file_name)
     with open(md_file_path, "w") as f:
@@ -147,9 +130,9 @@ def generate(cate_list: list[str], tag: str, args):
             for item in cate2item[cate]:
                 translations = translate(
                     item, (args.translate_title, args.translate_abs), args.translate_force)
-                f.write(item.to_markdown(translations))
+                f.write(ATOM2MD(item, translations))
         for cate in skip2item:
-            skips = [item.id_short for item in skip2item[cate]]
+            skips = [item.arxivid for item in skip2item[cate]]
             f.write(f"> SKIP {cate} {','.join(skips)}  \n")
 
     logger.info("Convert result to HTML")
