@@ -137,8 +137,33 @@ def generate_from_query(cate_list: list[str], args) -> tuple[list[ATOMItem], str
     db.conn.commit()
     return atom_items, rss_meta.pubDate
 
+def generate_html(markdown_text : str, args, style_link: str) -> str:
+    md = markdown.Markdown(extensions=["toc"])
+    content = md.convert(markdown_text)
+    prelude = f"""
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Arxiv Feed for {args.collection}</title>
+    <link type="text/css" rel="stylesheet" href="{style_link}">
+  </head>
+  <body>
+"""
+    content = f"""
+      <div id="write">
+      {content}
+      </div>
+"""
+    postlude = f"""
+    </div>
+  </body>
+</html>
+"""
+    return "".join([prelude, md.toc, content, postlude])
 
-def generate(cate_list: list[str], tag: str, args):
+def generate(args):
+    cate_list: list[str] = arxivcategory.COLLECTIONS[args.collection]
     db.init_db()
     if args.history is not None:
         atom_items, arxivtime = generate_from_history(args.history, args)
@@ -167,18 +192,18 @@ def generate(cate_list: list[str], tag: str, args):
 
     logger.info(f"Generating markdown")
     arxivdate = utils.get_arxiv_time(arxivtime).strftime("%y%m%d")
-    md_filename = f"Feed-{arxivdate}-{tag}.md"
+    md_filename = f"Feed-{arxivdate}-{args.collection}.md"
     md_filepath = path.join(CACHE_GEN, md_filename)
     fetchtime = utils.get_local_time(datetime.datetime.now())
     fetchtime = f"""{fetchtime.strftime("%Y-%m-%d %H:%M")} {datetime.datetime.tzname(fetchtime)}"""
     with open(md_filepath, "w") as f:
-        f.write(generate_markdown(cate2item, skip2item, tag, arxivtime, fetchtime))
+        f.write(generate_markdown(cate2item, skip2item, args.collection, arxivtime, fetchtime))
 
     logger.info("Convert result to HTML")
     with open(md_filepath, "r", encoding='utf-8') as input_file:
         text = input_file.read()
-    html = markdown.markdown(text)
-    html_filename = f"Feed-{arxivdate}-{tag}.html"
+    html = generate_html(text, args, "../static/cement/cement.css")
+    html_filename = f"Feed-{arxivdate}-{args.collection}.html"
     html_filepath = path.join(CACHE_GEN, html_filename)
     with open(html_filepath, "w", encoding="utf-8", errors="xmlcharrefreplace") as output_file:
         output_file.write(html)
@@ -187,9 +212,9 @@ def generate(cate_list: list[str], tag: str, args):
     if not args.no_open_browser:
         webbrowser.open_new_tab(os.path.abspath(html_filepath))
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Fetch feed from arxiv by RSS and its API')
+    parser.add_argument('-c', "--collection", type=str, required=True)
     parser.add_argument('-V', '--verbose', default=False, action='store_true')
     parser.add_argument('-r', '--refetch', default=False, action='store_true')
     parser.add_argument('--translate-title', default=False, action='store_true')
@@ -204,8 +229,7 @@ if __name__ == "__main__":
         utils.logger_init(utils.logging.DEBUG)
     else:
         utils.logger_init(utils.logging.INFO)
-    generate(arxivcategory.SYS_CATEGORY, "SYS", args)
-    generate(arxivcategory.AI_CATEGORY, "AI", args)
+    generate(args)
 
 """
 TODO [] Special character

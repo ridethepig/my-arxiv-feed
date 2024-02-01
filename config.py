@@ -6,6 +6,6 @@ API_BASE = "http://export.arxiv.org/api/query"
 CACHE_FETCH = "cache/fetch/"
 if not os.path.exists(CACHE_FETCH):
     os.makedirs(CACHE_FETCH)
-CACHE_GEN = "cache/gen/"
+CACHE_GEN = "output/"
 if not os.path.exists(CACHE_GEN):
     os.makedirs(CACHE_GEN)

@@ -18,3 +18,7 @@ CS_CATEGORY = {
 
 AI_CATEGORY = ["cs.AI", "cs.CV", "cs.LG"]
 SYS_CATEGORY = ["cs.AR", "cs.PL", "cs.DC", "cs.DB"]
+COLLECTIONS = {
+    "sys": SYS_CATEGORY,
+    "ai": AI_CATEGORY,
+}
