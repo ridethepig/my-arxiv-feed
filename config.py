@@ -1,7 +1,7 @@
 import os
 import os.path
 
-RSS_BASE = "http://arxiv.org/rss/"
+RSS_BASE = "http://rss.arxiv.org/rss/"
 API_BASE = "http://export.arxiv.org/api/query"
 CACHE_FETCH = "cache/fetch/"
 if not os.path.exists(CACHE_FETCH):

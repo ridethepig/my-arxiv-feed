@@ -29,6 +29,27 @@ class RSSMeta:
 
 
 @dataclass
+class RSSMetaNew:
+    title: str
+    description: str
+    lastBuildDate: str
+    pubDate: str
+
+@dataclass
+class RSSItemNew:
+    arxivid: str
+    title: str
+    link: str
+    description: str
+    announcetype: str
+    authors: str
+    
+    def is_update(self) -> bool:
+        return self.announcetype.find("new") != -1
+    def is_crosslist(self) -> bool:
+        return self.announcetype.find("cross") != -1
+
+@dataclass
 class ATOMItem:
     arxivid: str
     id: str
@@ -94,6 +115,50 @@ def parse_atom(atom_str: str) -> list[ATOMItem]:
         )
         query_results.append(atom_item)
     return query_results
+
+
+def parse_rss_new(rss_str: str) -> tuple[RSSMetaNew, list[RSSItemNew]]:
+    xml = etree.XML(rss_str)
+    nsmap = xml.nsmap
+    def get_text(item, xpath: str) -> str: return item.xpath(xpath,  namespaces=nsmap)[0].text
+
+    rss_chan = xml.xpath("/rss/channel")[0]
+
+    meta_title = get_text(rss_chan, "./title")
+    meta_description = get_text(rss_chan, "./description")
+    meta_lastBuildDate = get_text(rss_chan, "./lastBuildDate")
+    meta_pubDate = get_text(rss_chan, "./pubDate")
+    rss_meta = RSSMetaNew(title=meta_title,
+                          description=meta_description,
+                          lastBuildDate=meta_lastBuildDate,
+                          pubDate=meta_pubDate)
+    logger.debug(rss_meta)
+
+    items = rss_chan.xpath("./item", namespaces=nsmap)
+    rss_items = list()
+    logger.info(f"{meta_title} {len(items)} Updates")
+    for item in items:
+        item_title = get_text(item, "title")
+        item_link = get_text(item, "link")
+        item_description = get_text(item, "./description")
+        item_announce_type = get_text(item, "./arxiv:announce_type")
+        item_guid = get_text(item, "./guid")
+        item_authors = item.xpath("./dc:creator", namespaces=nsmap)
+
+        _authors = ",".join([_author.text for _author in item_authors])
+        _arxivid = item_guid.split(":")[-1]
+        rss_item = RSSItemNew(
+            arxivid=_arxivid,
+            title=item_title,
+            link=item_link,
+            description=item_description,
+            announcetype=item_announce_type,
+            authors=_authors
+        )
+        rss_items.append(rss_item)
+        logger.debug(f"  {item_title}")
+    
+    return rss_meta, rss_items
 
 
 def parse_rss(rss_str: str) -> tuple[RSSMeta, list[RSSItem]]:

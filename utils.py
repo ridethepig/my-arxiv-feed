@@ -9,22 +9,30 @@ _local_tz = pytz.timezone("Asia/Shanghai")
 _utc_tz = pytz.timezone("UTC")
 _arxiv_tz = pytz.timezone("EST")
 
+def parse_time(time_str: str) -> datetime.datetime:
+    assert type(time_str) is str
+    try:
+        return datetime.datetime.fromisoformat(time_str)
+    except:
+        pass
+    return datetime.datetime.strptime(time_str, "%a, %d %b %Y %H:%M:%S %z")
+
 
 def get_local_time(raw_datetime: datetime.datetime | str) -> datetime.datetime:
     if type(raw_datetime) is str:
-        raw_datetime = datetime.datetime.fromisoformat(raw_datetime)
+        raw_datetime = parse_time(raw_datetime)
     return raw_datetime.astimezone(_local_tz)
 
 
 def get_utc_time(raw_datetime: datetime.datetime | str) -> datetime.datetime:
     if type(raw_datetime) is str:
-        raw_datetime = datetime.datetime.fromisoformat(raw_datetime)
+        raw_datetime = parse_time(raw_datetime)
     return raw_datetime.astimezone(_utc_tz)
 
 
 def get_arxiv_time(raw_datetime: datetime.datetime | str) -> datetime.datetime:
     if type(raw_datetime) is str:
-        raw_datetime = datetime.datetime.fromisoformat(raw_datetime)
+        raw_datetime = parse_time(raw_datetime)
     return raw_datetime.astimezone(_arxiv_tz)
 
 
