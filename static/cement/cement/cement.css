@@ -390,7 +390,7 @@ blockquote {
     color: var(--blockquote-font-color);
     background-color: var(--blockquote-bg-color);
     border-radius: 12px;
-    padding: 1.5rem 1rem;
+    padding: 0.25rem 1rem;
     transform: perspective(1px) translateZ(0);
     transition-duration: 0.2s;
     transition-property: border-radius;

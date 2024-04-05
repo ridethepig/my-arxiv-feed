@@ -9,6 +9,7 @@ _local_tz = pytz.timezone("Asia/Shanghai")
 _utc_tz = pytz.timezone("UTC")
 _arxiv_tz = pytz.timezone("EST")
 
+
 def parse_time(time_str: str) -> datetime.datetime:
     assert type(time_str) is str
     try:
@@ -36,6 +37,18 @@ def get_arxiv_time(raw_datetime: datetime.datetime | str) -> datetime.datetime:
     return raw_datetime.astimezone(_arxiv_tz)
 
 
+def pre_process_latex(raw_text: str) -> str:
+    text = raw_text
+    text = re.sub(r"\$\s*\\times\s*\$", "times", text)
+    # a common pattern in arXiv abs: ... outperforms the SOTA by 2.56 $\times$
+    text = re.sub(r"\\([&%\$#_\{\}])", r"\1", text)
+    # The following 10 characters have special meanings in (La)TeX:
+    # & % $ # _ { } ~ ^ \
+    # ==>
+    # \& \% \$ \# \_ \{ \} \textasciitilde \textasciicircum \textbackslash
+    return text
+
+
 def pre_process_abstract(raw_text: str) -> str:
     lines = raw_text.splitlines()
     paragraphs = []
@@ -45,8 +58,9 @@ def pre_process_abstract(raw_text: str) -> str:
             paragraphs.append(line[2:])
         else:
             paragraphs[-1] += " " + line
-    return "\n\n".join(paragraphs)\
-
+    text = "\n\n".join(paragraphs)
+    text = pre_process_latex(text)
+    return text
 
 
 def pre_proc_title(raw_title: str) -> str:
