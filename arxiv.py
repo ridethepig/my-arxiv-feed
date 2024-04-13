@@ -84,13 +84,18 @@ def generate_markdown(cate2item, skip2item, tag, pubtime, fetchtime) -> str:
 > Fetched @ {fetchtime}
 
 """)
-    for cate in cate2item:
-        f.write(
-            f"""## {cate}, {arxivcategory.ALL_CATEGORY[cate]}\n> {len(cate2item[cate])} papers today\n""")
-        for item in cate2item[cate]:
-            translations = translate(
-                item, (args.translate_title, args.translate_abs), args.translate_force)
-            f.write(ATOM2MD(item, translations))
+    from rich.progress import Progress
+    _progress_total = sum([len(cate2item[cate]) for cate in cate2item])
+    with Progress() as _progress:
+        _task = _progress.add_task("[blue]Generating MD...", total=_progress_total)
+        for cate in cate2item:
+            f.write(
+                f"""## {cate}, {arxivcategory.ALL_CATEGORY[cate]}\n> {len(cate2item[cate])} papers today\n""")
+            for item in cate2item[cate]:
+                translations = translate(
+                    item, (args.translate_title, args.translate_abs), args.translate_force)
+                f.write(ATOM2MD(item, translations))
+                _progress.update(_task, advance=1)
     for cate in skip2item:
         skips = [item.arxivid for item in skip2item[cate]]
         f.write(f"> SKIP {cate} {','.join(skips)}  \n")
@@ -233,5 +238,5 @@ if __name__ == "__main__":
 
 """
 TODO [] Special character
-TODO [] Math
+TODO [-] Math (Stripped out)
 """

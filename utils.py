@@ -40,6 +40,8 @@ def get_arxiv_time(raw_datetime: datetime.datetime | str) -> datetime.datetime:
 def pre_process_latex(raw_text: str) -> str:
     text = raw_text
     text = re.sub(r"\$\s*\\times\s*\$", "times", text)
+    if re.match(re.compile(r"\$.*\$"), text):
+        logger.warn("Unsupported math notation!")
     # a common pattern in arXiv abs: ... outperforms the SOTA by 2.56 $\times$
     text = re.sub(r"\\([&%\$#_\{\}])", r"\1", text)
     # The following 10 characters have special meanings in (La)TeX:
