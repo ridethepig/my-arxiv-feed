@@ -11,5 +11,17 @@ then
   echo "Invalid category: $category"
   exit
 fi
-$SCRIPT_DIR/.venv/bin/python arxiv.py -c $category --strict --onlynew --translate-title
-read -p "Press any key to continue"
+
+read -p "Include CrossRef? y/[n]: " crossref_on
+if [ -z $crossref_on ];
+then 
+  crossref_on="n"
+fi
+strict="--strict"
+if [ $crossref_on == "y" ]
+then
+  strict=""
+fi
+
+$SCRIPT_DIR/.venv/bin/python arxiv.py -c $category $strict --onlynew --translate-title
+read -p "Press ENTER to continue"

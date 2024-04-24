@@ -10,7 +10,7 @@ import markdown
 
 import arxivcategory
 import db
-import tencent_translator
+import translators
 import utils
 from arxivdata import ATOMItem, parse_atom, parse_rss_new
 from arxivquery import query_atom, query_rss
@@ -29,7 +29,7 @@ def translate(atom_item: ATOMItem, tr_option: tuple[bool, bool], force=False, de
     if trans_cache is None:
         trans_cache = TransItem(atom_item.arxivid, None, None)
     if tr_option[0] and (trans_cache.title is None or force):
-        trans_cache.title = tencent_translator.translate(atom_item.title)
+        trans_cache.title = translators.translate(atom_item.title)
         if trans_cache.title is None or len(trans_cache.title) == 0:
             db.conn.commit()
             raise Exception
@@ -38,7 +38,7 @@ def translate(atom_item: ATOMItem, tr_option: tuple[bool, bool], force=False, de
         time.sleep(delay)
     if tr_option[1] and (trans_cache.abs is None or force):
         summary = utils.pre_process_abstract(atom_item.summary)
-        trans_cache.abs = tencent_translator.translate(summary)
+        trans_cache.abs = translators.translate(summary)
         if trans_cache.abs is None or len(trans_cache.abs) == 0:
             db.conn.commit()
             raise Exception

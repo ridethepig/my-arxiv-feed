@@ -2,6 +2,8 @@ import urllib.parse
 import requests
 
 GOOGLE_TRANSLATE_URL = "https://translate.google.com"
+
+
 def RL(a, b):
     t = "a"
     Yb = "+"
@@ -12,6 +14,7 @@ def RL(a, b):
         d = a >> d if b[c + 1] == Yb else a << d
         a = (a + d) & 4294967295 if b[c] == Yb else a ^ d
     return a
+
 
 def TL(a):
     b = 406644
@@ -55,13 +58,15 @@ def TL(a):
     a %= 1000000
     return str(a) + jd + str(a ^ b)
 
+
 def translate(data: str):
-    langfrom="en-US"
-    langto="zh-CN"
+    langfrom = "en-US"
+    langto = "zh-CN"
     param = f"sl={langfrom}&tl={langto}"
     tk = TL(data)
     q = urllib.parse.quote(data)
-    resp = requests.get(f"{GOOGLE_TRANSLATE_URL}/translate_a/single?client=gtx&{param}&hl=zh-CN&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&source=bh&ssel=0&tsel=0&kc=1&tk={tk}&q={q}")
+    resp = requests.get(
+        f"{GOOGLE_TRANSLATE_URL}/translate_a/single?client=gtx&{param}&hl=zh-CN&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&source=bh&ssel=0&tsel=0&kc=1&tk={tk}&q={q}")
     resp_json = resp.json()
     tgt = ""
     for i in range(len(resp_json[0])):
@@ -71,5 +76,7 @@ def translate(data: str):
             tgt += resp_json[0][i][0]
     return tgt
 
+
 if __name__ == "__main__":
-    translate("What are you doing now?")
+    print("Test:")
+    print(translate("What are you doing now?"))

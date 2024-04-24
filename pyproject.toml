@@ -1,0 +1,14 @@
+[project]
+dependencies = [
+    "feedparser",
+    "ipython",
+    "lxml",
+    "requests",
+    "tencentcloud-sdk-python-tmt",
+    "markdown",
+    "pytz",
+    "rich"
+]
+requires-python = ">=3.10"
+
+license = {text = "GPLv3 License"}

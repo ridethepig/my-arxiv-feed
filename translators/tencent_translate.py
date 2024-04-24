@@ -7,7 +7,7 @@ from tencentcloud.common.profile.client_profile import ClientProfile
 from tencentcloud.common.profile.http_profile import HttpProfile
 from tencentcloud.tmt.v20180321 import models, tmt_client
 
-from keys.tencent import SecretId, SecretKey
+from .keys.tencent import SecretId, SecretKey
 from utils import logger
 
 
